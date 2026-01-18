@@ -21,6 +21,8 @@ class Settings:
     font_path: Path
 
     max_upload_bytes: int
+    max_upload_total_bytes: int
+    max_upload_files: int
 
 
 def _resolve_path(value: str | None, base_dir: Path) -> Path | None:
@@ -53,4 +55,6 @@ def get_settings() -> Settings:
         frontend_dir=frontend_dir,
         font_path=font_path,
         max_upload_bytes=int(os.getenv("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024))),
+        max_upload_total_bytes=int(os.getenv("MAX_UPLOAD_TOTAL_BYTES", str(40 * 1024 * 1024))),
+        max_upload_files=int(os.getenv("MAX_UPLOAD_FILES", "8")),
     )

@@ -2,16 +2,28 @@ from __future__ import annotations
 
 import logging
 import uuid
+import zipfile
 from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from PIL import Image
 
 from .ai.openrouter_client import OpenRouterClient
 from .config import get_settings
-from .processing.meme_generator import make_512_crops, make_montage_3x2, safe_open_image, save_memes_from_crops
+from .processing.meme_generator import (
+    auto_focus_square_crop,
+    make_512_crops,
+    make_montage_3x2,
+    mouth_closeup_square_crop,
+    mouth_closeup_square_crop_global,
+    safe_open_image,
+    save_memes_from_crops,
+    square_from_box,
+)
+from .processing.selection import build_candidates, pick_top_5
 from .processing.safety import (
     DEFAULT_SUGGESTIONS,
     detect_crop_preference,
@@ -82,9 +94,21 @@ def _write_debug_text(out_dir: Path, filename: str, parts: list[str]) -> str:
     path.write_text(text, encoding="utf-8", errors="replace")
     return _safe_public_url("generated", filename)
 
+def _write_zip(out_dir: Path, request_id: str, png_filenames: list[str]) -> str:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    zip_name = f"{request_id}_memes.zip"
+    zip_path = out_dir / zip_name
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for idx, filename in enumerate(png_filenames):
+            src = out_dir / filename
+            arcname = f"baby_meme_{idx+1}.png"
+            try:
+                zf.write(src, arcname=arcname)
+            except Exception:
+                continue
+    return _safe_public_url("generated", zip_name)
 
-@app.post("/upload")
-async def upload(file: UploadFile = File(...), prompt: str | None = Form(None)):
+async def _upload_single(file: UploadFile, prompt: str | None):
     request_id = uuid.uuid4().hex
 
     image_bytes = await file.read()
@@ -329,8 +353,10 @@ async def upload(file: UploadFile = File(...), prompt: str | None = Form(None)):
         )
 
     results = [{"caption": m.caption, "url": _safe_public_url("generated", m.filename)} for m in memes]
+    download_url = _write_zip(out_dir, request_id, [m.filename for m in memes])
 
     return {
+        "mode": "single",
         "request_id": request_id,
         "used_ai": used_ai,
         "ai_attempted": ai_attempted,
@@ -352,7 +378,302 @@ async def upload(file: UploadFile = File(...), prompt: str | None = Form(None)):
         "expression_notes": expression_notes,
         "results": results,
         "suggestions": suggestions,
+        "download_url": download_url,
     }
+
+async def _upload_multi(files: list[UploadFile], prompt: str | None):
+    request_id = uuid.uuid4().hex
+    if len(files) > settings.max_upload_files:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": "too_many_files",
+                "message": f"最多支持同时上传 {settings.max_upload_files} 张照片",
+                "request_id": request_id,
+            },
+        )
+
+    user_prompt, user_prompt_status = sanitize_user_prompt(prompt)
+    crop_preference = detect_crop_preference(user_prompt)
+    user_prompt_for_ai = user_prompt
+    if crop_preference == "mouth_closeup" and user_prompt_for_ai:
+        user_prompt_for_ai = (
+            f"{user_prompt_for_ai}"
+            "（裁剪硬约束：嘴巴必须完整可见，左右上下要留出安全边距；尽量只取嘴巴/嘴唇与口水区域，尽量避免口水巾/衣服）"
+        )
+
+    total_bytes = 0
+    images = []
+    images_bytes = []
+    images_mime = []
+    image_names = []
+    unreadable: list[str] = []
+
+    for f in files:
+        b = await f.read()
+        if not b:
+            continue
+        if len(b) > settings.max_upload_bytes:
+            return JSONResponse(
+                status_code=413,
+                content={
+                    "error": "file_too_large",
+                    "message": f"图片过大（>{settings.max_upload_bytes} bytes）：{f.filename or 'unknown'}",
+                    "request_id": request_id,
+                },
+            )
+        total_bytes += len(b)
+        if total_bytes > settings.max_upload_total_bytes:
+            return JSONResponse(
+                status_code=413,
+                content={
+                    "error": "payload_too_large",
+                    "message": f"本次上传总大小过大（>{settings.max_upload_total_bytes} bytes）",
+                    "request_id": request_id,
+                },
+            )
+
+        mime = _guess_mime(f.content_type, f.filename)
+        img, err = safe_open_image(b)
+        if img is None:
+            unreadable.append(f.filename or "unknown")
+            continue
+        images.append(img)
+        images_bytes.append(b)
+        images_mime.append(mime)
+        image_names.append(f.filename or f"image_{len(image_names)+1}")
+
+    out_dir = Path(settings.generated_dir)
+
+    if not images:
+        from .processing.meme_generator import generate_memes
+
+        captions, _ = ensure_5_safe_captions([], "不确定")
+        memes = generate_memes(
+            img=None,
+            crop_boxes=None,
+            captions=captions,
+            out_dir=out_dir,
+            request_id=request_id,
+            font_path=Path(settings.font_path),
+            crop_preference="",
+        )
+        results = [{"caption": m.caption, "url": _safe_public_url("generated", m.filename)} for m in memes]
+        download_url = _write_zip(out_dir, request_id, [m.filename for m in memes])
+        return {
+            "mode": "multi",
+            "request_id": request_id,
+            "used_ai": False,
+            "ai_attempted": False,
+            "ai_calls": 0,
+            "ai_error_stage": "",
+            "ai_error": "图片读取失败",
+            "user_prompt": user_prompt or "",
+            "user_prompt_status": user_prompt_status,
+            "crop_preference": crop_preference,
+            "captions_ai_used": False,
+            "captions_ai_error": "",
+            "captions_source": "fallback",
+            "captions_aligned_to_crops": False,
+            "ai_debug_url": "",
+            "captions_debug_url": "",
+            "fallback_used": True,
+            "fallback_reason": "图片读取失败",
+            "expression_label": "不确定",
+            "expression_notes": "",
+            "results": results,
+            "suggestions": DEFAULT_SUGGESTIONS,
+            "input_count": len(files),
+            "usable_count": 0,
+            "unreadable": unreadable,
+            "selection": [],
+            "download_url": download_url,
+        }
+
+    candidates = build_candidates(images, image_names, include_mouth=True)
+    if crop_preference == "mouth_closeup":
+        candidates = [c for c in candidates if c.crop_type == "mouth"]
+        max_mouth = 5
+    else:
+        max_mouth = 2
+
+    selected = pick_top_5(candidates, max_mouth=max_mouth, target=5)
+
+    # Best-effort per-image AI boxes (only used to refine crops; never blocks output).
+    used_ai = False
+    ai_attempted = False
+    ai_error_stage = ""
+    ai_error = ""
+    ai_calls = 0
+    per_image_box: dict[int, CropBox] = {}
+
+    def _ai_analyze_for_box(idx: int) -> CropBox | None:
+        nonlocal used_ai, ai_attempted, ai_error_stage, ai_error, ai_calls
+        if not settings.openrouter_api_key:
+            return None
+
+        debug_parts: list[str] = []
+
+        def _call(strict_retry: bool, hint: str | None, previous_output: str | None) -> str:
+            nonlocal ai_attempted, ai_calls
+            ai_attempted = True
+            ai_calls += 1
+            raw = openrouter.analyze_image(
+                image_bytes=images_bytes[idx],
+                mime_type=images_mime[idx],
+                user_prompt=user_prompt_for_ai,
+                previous_output=previous_output,
+                strict_retry=strict_retry,
+                error_hint=hint,
+            )
+            debug_parts.append(raw.content_text or "")
+            return raw.content_text
+
+        content1 = _call(strict_retry=False, hint=None, previous_output=None)
+        try:
+            parsed1 = extract_json_object(content1)
+            obj1 = AIResult.model_validate(parsed1)
+        except Exception as e1:
+            content2 = _call(strict_retry=True, hint=str(e1), previous_output=content1)
+            parsed2 = extract_json_object(content2)
+            obj1 = AIResult.model_validate(parsed2)
+
+        if (not obj1.safety.allowed) or (obj1.safety.risk == "high") or obj1.fallback.use_fallback:
+            return None
+
+        used_ai = True
+        boxes = obj1.crop_plan.boxes or []
+        if not boxes:
+            return None
+        return boxes[0]
+
+    unique_src = sorted({c.src_index for c in selected})
+    for idx in unique_src:
+        try:
+            box = _ai_analyze_for_box(idx)
+            if box is not None:
+                per_image_box[idx] = box
+        except Exception as e:
+            ai_error_stage = ai_error_stage or "multi_ai"
+            ai_error = str(e)
+
+    crops_512 = []
+    for i, cand in enumerate(selected):
+        img = images[cand.src_index]
+        box = per_image_box.get(cand.src_index)
+        if crop_preference == "mouth_closeup" or cand.crop_type == "mouth":
+            crop = mouth_closeup_square_crop(img, box, variant=i) if box is not None else mouth_closeup_square_crop_global(img, variant=i)
+        else:
+            crop = square_from_box(img, box) if box is not None else auto_focus_square_crop(img)
+        crop = crop.resize((512, 512), Image.Resampling.LANCZOS).convert("RGBA")
+        crops_512.append(crop)
+
+    # Base captions (then try aligning to final crops).
+    if crop_preference == "mouth_closeup":
+        captions, _ = ensure_5_safe_captions(get_mouth_closeup_captions(5), "不确定")
+        captions_source = "mouth_fallback"
+    else:
+        captions, _ = ensure_5_safe_captions([], "不确定")
+        captions_source = "fallback"
+
+    captions_ai_used = False
+    captions_ai_error = ""
+    captions_debug_url = ""
+
+    if settings.openrouter_api_key:
+        cap_debug_parts: list[str] = []
+        try:
+            import io
+
+            montage = make_montage_3x2(crops_512)
+            buf = io.BytesIO()
+            montage.convert("RGB").save(buf, format="JPEG", quality=85, optimize=True)
+            montage_bytes = buf.getvalue()
+
+            raw2 = openrouter.captions_for_montage(montage_bytes, "image/jpeg", user_prompt=user_prompt, strict_retry=False, error_hint=None)
+            cap_debug_parts.append(raw2.content_text or "")
+            try:
+                parsed2 = extract_json_object(raw2.content_text)
+                cap_obj = CaptionsResult.model_validate(parsed2)
+            except Exception as e0:
+                raw2b = openrouter.captions_for_montage(montage_bytes, "image/jpeg", user_prompt=user_prompt, strict_retry=True, error_hint=str(e0))
+                cap_debug_parts.append(raw2b.content_text or "")
+                parsed2b = extract_json_object(raw2b.content_text)
+                cap_obj = CaptionsResult.model_validate(parsed2b)
+            if (not cap_obj.safety.allowed) or (cap_obj.safety.risk == "high") or cap_obj.fallback.use_fallback:
+                raise RuntimeError("captions_safety_fallback")
+
+            captions2, caption2_fallback = ensure_5_safe_captions([c.text for c in cap_obj.captions], "不确定")
+            if caption2_fallback:
+                raise RuntimeError("captions_filtered")
+
+            captions = captions2
+            captions_ai_used = True
+            captions_source = "ai_crops"
+        except Exception as e:
+            captions_ai_error = str(e)
+            if cap_debug_parts:
+                captions_debug_url = _write_debug_text(
+                    Path(settings.generated_dir),
+                    f"{request_id}_ai_captions_debug.txt",
+                    cap_debug_parts,
+                )
+
+    memes = save_memes_from_crops(
+        crops_512=crops_512,
+        captions=captions,
+        out_dir=out_dir,
+        request_id=request_id,
+        font_path=Path(settings.font_path),
+    )
+
+    results = [{"caption": m.caption, "url": _safe_public_url("generated", m.filename)} for m in memes]
+    download_url = _write_zip(out_dir, request_id, [m.filename for m in memes])
+    selection = [{"source": c.src_name, "crop_type": c.crop_type, "score": float(round(c.score, 4))} for c in selected]
+
+    return {
+        "mode": "multi",
+        "request_id": request_id,
+        "used_ai": used_ai,
+        "ai_attempted": ai_attempted,
+        "ai_calls": ai_calls,
+        "ai_error_stage": ai_error_stage,
+        "ai_error": ai_error,
+        "user_prompt": user_prompt or "",
+        "user_prompt_status": user_prompt_status,
+        "crop_preference": crop_preference,
+        "captions_ai_used": captions_ai_used,
+        "captions_ai_error": captions_ai_error,
+        "captions_source": captions_source,
+        "captions_aligned_to_crops": bool(captions_ai_used and captions_source == "ai_crops"),
+        "ai_debug_url": "",
+        "captions_debug_url": captions_debug_url,
+        "fallback_used": False,
+        "fallback_reason": "",
+        "expression_label": "不确定",
+        "expression_notes": "多照片模式：已自动从多张照片挑选特写部位并统一生成 5 张",
+        "results": results,
+        "suggestions": [],
+        "input_count": len(files),
+        "usable_count": len(images),
+        "unreadable": unreadable,
+        "selection": selection,
+        "download_url": download_url,
+    }
+
+
+@app.post("/upload")
+async def upload(files: list[UploadFile] = File(..., alias="file"), prompt: str | None = Form(None)):
+    if not files:
+        request_id = uuid.uuid4().hex
+        return JSONResponse(
+            status_code=400,
+            content={"error": "empty_upload", "message": "没有收到图片文件", "request_id": request_id},
+        )
+
+    if len(files) == 1:
+        return await _upload_single(files[0], prompt)
+    return await _upload_multi(files, prompt)
 
 
 def _mount_static() -> None:

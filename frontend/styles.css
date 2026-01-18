@@ -147,6 +147,37 @@ button:disabled {
   align-items: center;
 }
 
+.downloadBar {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.downloadBar.hidden {
+  display: none;
+}
+
+.downloadBar a {
+  color: var(--text);
+  text-decoration: none;
+  border: 1px solid rgba(34, 197, 94, 0.45);
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: rgba(34, 197, 94, 0.12);
+  font-weight: 700;
+}
+
+.downloadBar a:hover {
+  border-color: rgba(34, 197, 94, 0.75);
+}
+
+.downloadHint {
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+}
+
 .badge {
   display: inline-flex;
   align-items: center;

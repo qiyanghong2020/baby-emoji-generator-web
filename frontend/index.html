@@ -10,14 +10,14 @@
     <main class="container">
       <header class="header">
         <h1>宝宝表情包生成器</h1>
-        <p class="sub">只需上传一张照片，自动生成 5 张 512×512 微信风格表情包（裁剪 + 配文 + 渲染）。</p>
+        <p class="sub">可上传 1~多张照片，自动挑选特写部位并统一生成 5 张 512×512 微信风格表情包（裁剪 + 配文 + 渲染）。</p>
       </header>
 
       <section class="card">
         <form id="uploadForm">
           <label class="file">
-            <input id="fileInput" name="file" type="file" accept="image/*" required />
-            <span>选择宝宝照片</span>
+            <input id="fileInput" name="file" type="file" accept="image/*" multiple required />
+            <span>选择宝宝照片（可多选）</span>
           </label>
           <label class="prompt">
             <span class="promptLabel">可选提示词</span>
@@ -41,6 +41,7 @@
         </div>
         <div id="status" class="status" aria-live="polite"></div>
         <div id="captionStatus" class="captionStatus"></div>
+        <div id="downloadBar" class="downloadBar hidden"></div>
         <div id="analysis" class="analysis"></div>
         <div id="tips" class="tips"></div>
       </section>

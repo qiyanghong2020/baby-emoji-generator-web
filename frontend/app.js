@@ -8,6 +8,7 @@ const grid = document.getElementById("grid");
 const tips = document.getElementById("tips");
 const analysisEl = document.getElementById("analysis");
 const captionStatusEl = document.getElementById("captionStatus");
+const downloadBar = document.getElementById("downloadBar");
 const previewWrap = document.getElementById("previewWrap");
 const previewImg = document.getElementById("previewImg");
 const previewMeta = document.getElementById("previewMeta");
@@ -25,6 +26,18 @@ function setAnalysis(text) {
 function setCaptionStatus(html) {
   if (!captionStatusEl) return;
   captionStatusEl.innerHTML = html || "";
+}
+
+function setDownloadBar(url, requestId) {
+  if (!downloadBar) return;
+  if (!url) {
+    downloadBar.classList.add("hidden");
+    downloadBar.innerHTML = "";
+    return;
+  }
+  const filename = requestId ? `baby_memes_${requestId}.zip` : "baby_memes.zip";
+  downloadBar.classList.remove("hidden");
+  downloadBar.innerHTML = `<a href="${escapeHtml(url)}" download="${escapeHtml(filename)}">一键下载（ZIP）</a><span class="downloadHint">包含 5 张 PNG</span>`;
 }
 
 function escapeHtml(str) {
@@ -75,8 +88,24 @@ async function getImageDimensions(file) {
   });
 }
 
-async function showPreview(file) {
-  if (!file) {
+function formatTotalBytes(files) {
+  let total = 0;
+  (files || []).forEach((f) => {
+    total += Number(f && f.size ? f.size : 0);
+  });
+  return total;
+}
+
+function formatFileNames(files, limit = 4) {
+  const names = (files || []).map((f) => (f && f.name ? f.name : "unknown")).filter(Boolean);
+  if (names.length <= limit) return names.join("、");
+  return `${names.slice(0, limit).join("、")} 等 ${names.length} 张`;
+}
+
+async function showPreview(files) {
+  const list = Array.from(files || []).filter(Boolean);
+  const first = list[0];
+  if (!first) {
     if (previewObjectUrl) URL.revokeObjectURL(previewObjectUrl);
     previewObjectUrl = null;
     previewWrap.classList.add("hidden");
@@ -86,13 +115,20 @@ async function showPreview(file) {
   }
 
   if (previewObjectUrl) URL.revokeObjectURL(previewObjectUrl);
-  previewObjectUrl = URL.createObjectURL(file);
+  previewObjectUrl = URL.createObjectURL(first);
   previewImg.src = previewObjectUrl;
   previewWrap.classList.remove("hidden");
 
-  const dims = await getImageDimensions(file);
+  const dims = await getImageDimensions(first);
   const dimText = dims.w && dims.h ? `${dims.w}×${dims.h}` : "尺寸未知";
-  previewMeta.textContent = `${file.name} · ${formatBytes(file.size)} · ${dimText}`;
+
+  if (list.length <= 1) {
+    previewMeta.textContent = `${first.name} · ${formatBytes(first.size)} · ${dimText}`;
+    return;
+  }
+  const total = formatBytes(formatTotalBytes(list));
+  const names = formatFileNames(list);
+  previewMeta.textContent = `${names} · 总计 ${total} · 首张 ${first.name}（${dimText}）`;
 }
 
 function renderResults(results) {
@@ -117,11 +153,13 @@ function renderResults(results) {
 }
 
 fileInput.addEventListener("change", async () => {
-  const file = fileInput.files && fileInput.files[0];
-  await showPreview(file);
-  if (file) setStatus(`已选择：${file.name}`);
+  const files = Array.from(fileInput.files || []);
+  await showPreview(files);
+  if (files.length === 1) setStatus(`已选择：${files[0].name}`);
+  else if (files.length > 1) setStatus(`已选择 ${files.length} 张照片`);
   setAnalysis("");
   setCaptionStatus("");
+  setDownloadBar("");
 });
 
 function updatePromptCounter() {
@@ -137,22 +175,24 @@ if (promptInput) {
 
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
-  const file = fileInput.files && fileInput.files[0];
-  if (!file) return;
+  const files = Array.from(fileInput.files || []);
+  if (!files || files.length === 0) return;
 
   const userPrompt = (promptInput && promptInput.value ? String(promptInput.value) : "").trim();
 
   submitBtn.disabled = true;
-  await showPreview(file);
-  setStatus(`已上传：${file.name}，生成中…（通常 5-15 秒，取决于网络与模型）`);
+  await showPreview(files);
+  const uploadingText = files.length === 1 ? `已上传：${files[0].name}` : `已上传：${files.length} 张照片`;
+  setStatus(`${uploadingText}，生成中…（通常 5-20 秒，取决于网络与模型）`);
   setAnalysis("");
   setCaptionStatus("");
   setTips([]);
+  setDownloadBar("");
   renderResults([]);
 
   try {
     const fd = new FormData();
-    fd.append("file", file, file.name);
+    files.forEach((f) => fd.append("file", f, f.name));
     if (userPrompt) fd.append("prompt", userPrompt);
     const resp = await fetch("/upload", { method: "POST", body: fd });
     const data = await resp.json();
@@ -163,9 +203,7 @@ form.addEventListener("submit", async (e) => {
       return;
     }
 
-    const label = data.expression_label ? `（表情：${data.expression_label}）` : "";
-    const fallback = data.fallback_used ? "已启用回退" : "AI 规划已生效";
-    const reason = data.fallback_used && data.fallback_reason ? `：${data.fallback_reason}` : "";
+    const mode = data.mode || (files.length > 1 ? "multi" : "single");
     const aiStatus = data.used_ai ? "AI=成功" : data.ai_attempted ? "AI=失败" : "AI=未启用";
     const stage = !data.used_ai && data.ai_error_stage ? `/${data.ai_error_stage}` : "";
     const calls = typeof data.ai_calls === "number" && data.ai_calls > 0 ? `（调用${data.ai_calls}次）` : "";
@@ -174,7 +212,20 @@ form.addEventListener("submit", async (e) => {
       if (data.user_prompt_status === "ok") promptInfo = "（提示词已生效）";
       else if (data.user_prompt_status && data.user_prompt_status !== "empty") promptInfo = "（提示词已忽略：不合规/过长）";
     }
-    setStatus(`${fallback}${label}${reason}（${aiStatus}${stage}${calls}）${promptInfo}`);
+
+    if (mode === "multi") {
+      const inputCount = typeof data.input_count === "number" ? data.input_count : files.length;
+      const usableCount = typeof data.usable_count === "number" ? data.usable_count : inputCount;
+      const sel = Array.isArray(data.selection) ? data.selection : [];
+      const uniqueSources = new Set(sel.map((s) => (s && s.source ? String(s.source) : "")).filter(Boolean));
+      const usedSourcesText = uniqueSources.size ? `，选用 ${uniqueSources.size} 张` : "";
+      setStatus(`多照片模式：可用 ${usableCount}/${inputCount} 张${usedSourcesText}（${aiStatus}${stage}${calls}）${promptInfo}`);
+    } else {
+      const label = data.expression_label ? `（表情：${data.expression_label}）` : "";
+      const fallback = data.fallback_used ? "已启用回退" : "AI 规划已生效";
+      const reason = data.fallback_used && data.fallback_reason ? `：${data.fallback_reason}` : "";
+      setStatus(`${fallback}${label}${reason}（${aiStatus}${stage}${calls}）${promptInfo}`);
+    }
 
     const aligned = Boolean(data.captions_aligned_to_crops);
     const source = data.captions_source || "";
@@ -195,13 +246,23 @@ form.addEventListener("submit", async (e) => {
       `<span class="${badgeClass}">${badgeText}</span>` +
         (extra ? `<span class="badgeText">${extra}</span>` : "")
     );
-    setAnalysis(data.expression_notes ? `识别说明：${data.expression_notes}` : "");
+
+    const selectionText =
+      Array.isArray(data.selection) && data.selection.length
+        ? `选用：${data.selection
+            .map((s) => `${(s && s.source ? String(s.source) : "unknown")}（${s && s.crop_type ? String(s.crop_type) : ""}）`)
+            .join(" · ")}`
+        : "";
+    const notesText = data.expression_notes ? `识别说明：${String(data.expression_notes)}` : "";
+    setAnalysis([notesText, selectionText].filter(Boolean).join(" / "));
     setTips(data.suggestions || []);
     renderResults(data.results || []);
+    setDownloadBar(data.download_url || "", data.request_id || "");
   } catch (err) {
     setStatus(`失败：${err && err.message ? err.message : String(err)}`);
     setAnalysis("");
     setCaptionStatus("");
+    setDownloadBar("");
   } finally {
     submitBtn.disabled = false;
   }
