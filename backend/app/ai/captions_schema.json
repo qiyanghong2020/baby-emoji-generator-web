@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["captions", "safety", "fallback"],
+  "properties": {
+    "captions": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["text", "tone", "safety_notes"],
+        "properties": {
+          "text": { "type": "string", "minLength": 1, "maxLength": 60 },
+          "tone": { "type": "string", "enum": ["温柔", "搞笑", "多梗", "中性"] },
+          "safety_notes": { "type": "string" }
+        }
+      }
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed", "risk", "reasons", "red_flags"],
+      "properties": {
+        "allowed": { "type": "boolean" },
+        "risk": { "type": "string", "enum": ["low", "medium", "high"] },
+        "reasons": { "type": "array", "items": { "type": "string" } },
+        "red_flags": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "fallback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["use_fallback", "reason", "suggestions"],
+      "properties": {
+        "use_fallback": { "type": "boolean" },
+        "reason": { "type": "string" },
+        "suggestions": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}
+

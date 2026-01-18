@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>宝宝表情包生成器</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="container">
+      <header class="header">
+        <h1>宝宝表情包生成器</h1>
+        <p class="sub">只需上传一张照片，自动生成 5 张 512×512 微信风格表情包（裁剪 + 配文 + 渲染）。</p>
+      </header>
+
+      <section class="card">
+        <form id="uploadForm">
+          <label class="file">
+            <input id="fileInput" name="file" type="file" accept="image/*" required />
+            <span>选择宝宝照片</span>
+          </label>
+          <label class="prompt">
+            <span class="promptLabel">可选提示词</span>
+            <textarea
+              id="promptInput"
+              name="prompt"
+              maxlength="240"
+              rows="2"
+              placeholder="例如：更搞笑一点 / 更温柔 / 多梗一点 / 上班摸鱼风 / 只要嘴巴特写"
+            ></textarea>
+            <span id="promptCounter" class="promptCounter">0/240</span>
+          </label>
+          <button id="submitBtn" type="submit">一键生成 5 张</button>
+        </form>
+        <div id="previewWrap" class="preview hidden">
+          <img id="previewImg" alt="已选择的照片预览" />
+          <div class="previewMeta">
+            <div class="previewTitle">已选择照片</div>
+            <div id="previewMeta" class="previewText"></div>
+          </div>
+        </div>
+        <div id="status" class="status" aria-live="polite"></div>
+        <div id="captionStatus" class="captionStatus"></div>
+        <div id="analysis" class="analysis"></div>
+        <div id="tips" class="tips"></div>
+      </section>
+
+      <section class="grid" id="grid"></section>
+
+      <footer class="footer">
+        <span>提示：尽量让脸部清晰、光线充足、避免遮挡。</span>
+      </footer>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

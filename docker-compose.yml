@@ -1,0 +1,13 @@
+services:
+  baby-meme:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      OPENROUTER_SITE_URL: ${OPENROUTER_SITE_URL:-http://localhost:8000}
+      OPENROUTER_APP_NAME: ${OPENROUTER_APP_NAME:-baby-meme-generator}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openai/gpt-5.2}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      OPENROUTER_TIMEOUT_S: ${OPENROUTER_TIMEOUT_S:-45}
+

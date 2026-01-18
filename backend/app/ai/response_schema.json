@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["image_quality", "expression_analysis", "crop_plan", "captions", "safety", "fallback"],
+  "properties": {
+    "image_quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["score", "issues", "usable"],
+      "properties": {
+        "score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "issues": { "type": "array", "items": { "type": "string" } },
+        "usable": { "type": "boolean" }
+      }
+    },
+    "expression_analysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["primary_label", "confidence", "notes"],
+      "properties": {
+        "primary_label": { "type": "string", "enum": ["开心", "委屈", "生气", "震惊", "困", "不确定"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "notes": { "type": "string" }
+      }
+    },
+    "crop_plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["strategy", "boxes", "assumptions"],
+      "properties": {
+        "strategy": {
+          "type": "string",
+          "enum": ["face_focus", "upper_face", "mouth_focus", "center_square", "unknown"]
+        },
+        "boxes": {
+          "type": "array",
+          "minItems": 0,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["x", "y", "w", "h", "reason"],
+            "properties": {
+              "x": { "type": "number" },
+              "y": { "type": "number" },
+              "w": { "type": "number" },
+              "h": { "type": "number" },
+              "reason": { "type": "string" }
+            }
+          }
+        },
+        "assumptions": { "type": "string" }
+      }
+    },
+    "captions": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["text", "tone", "safety_notes"],
+        "properties": {
+          "text": { "type": "string" },
+          "tone": { "type": "string", "enum": ["温柔", "搞笑", "多梗", "中性"] },
+          "safety_notes": { "type": "string" }
+        }
+      }
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed", "risk", "reasons", "red_flags"],
+      "properties": {
+        "allowed": { "type": "boolean" },
+        "risk": { "type": "string", "enum": ["low", "medium", "high"] },
+        "reasons": { "type": "array", "items": { "type": "string" } },
+        "red_flags": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "fallback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["use_fallback", "reason", "suggestions"],
+      "properties": {
+        "use_fallback": { "type": "boolean" },
+        "reason": { "type": "string" },
+        "suggestions": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}
+
