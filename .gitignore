@@ -9,3 +9,5 @@ backend/generated/*
 .DS_Store
 Thumbs.db
 
+
+scripts/test_input.png
